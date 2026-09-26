@@ -1,0 +1,25 @@
+# 版本控制历史（776MB，构建不需要）
+.git
+
+# 依赖与构建产物：容器内会重新生成
+app/node_modules
+app/stage/build
+app/build
+app/src/types/dist
+app/kernel
+app/SiYuan-Kernel
+
+# pandoc：只保留目标架构 linux/arm64 的包，其余三个省掉约 130MB 上下文
+app/pandoc/pandoc-darwin-amd64.zip
+app/pandoc/pandoc-darwin-arm64.zip
+app/pandoc/pandoc-linux-amd64.zip
+app/pandoc/pandoc-windows-amd64.zip
+
+# 与构建无关的资源
+screenshots
+
+# 系统与编辑器垃圾
+.DS_Store
+**/.DS_Store
+*.log
+.eslintcache

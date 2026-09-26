@@ -1,0 +1,29 @@
+# SiYuan 容器化部署
+#
+#   1. 设置访问授权码（必填）
+#        export SIYUAN_ACCESS_AUTH_CODE='你的密码'
+#   2. 启动
+#        docker compose -f docker-compose.deploy.yml up -d
+#   3. 访问
+#        http://127.0.0.1:6806
+#
+# 数据保存在当前目录的 siyuan-workspace/，删除容器不会丢数据。
+
+services:
+  siyuan:
+    image: youweiwang2233/youwei-repository:latest
+    container_name: siyuan
+    restart: unless-stopped
+
+    ports:
+      - "6806:6806"
+
+    environment:
+      # 容器模式内核会绑定 0.0.0.0，因此强制要求访问授权码；
+      # 未设置时内核直接退出（exit 22）。这里用 :? 让其缺失时立即报错，
+      # 而不是静默起一个无密码的实例。
+      SIYUAN_ACCESS_AUTH_CODE: "${SIYUAN_ACCESS_AUTH_CODE:?请先 export SIYUAN_ACCESS_AUTH_CODE=你的密码}"
+      TZ: Asia/Shanghai
+
+    volumes:
+      - ./siyuan-workspace:/siyuan/workspace

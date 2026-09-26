@@ -1,0 +1,127 @@
+# 不使用 `# syntax=docker/dockerfile:1`：该 frontend 镜像需从 Docker Hub 拉取，
+# 国内镜像源对其返回 401。本文件仅使用内置 frontend 支持的标准特性。
+#
+# SiYuan 自包含运行时镜像 —— 从源码构建，全流程使用国内镜像源
+#
+# 构建（在仓库根目录）：
+#   docker build -f Dockerfile.deploy -t <仓库>:<tag> .
+#
+# 运行：
+#   docker run -d --name siyuan -p 6806:6806 \
+#     -v ~/siyuan-workspace:/siyuan/workspace <仓库>:<tag>
+#
+# 构建产物基线取自仓库官方 Dockerfile 与 .github/workflows/cd.yml，
+# 差异在于：注入国内镜像源、内置 pandoc（官方镜像不含，需运行时联网下载）。
+
+ARG NODE_IMAGE=node:22
+ARG GO_IMAGE=golang:1.26-alpine
+ARG ALPINE_IMAGE=alpine:latest
+
+# ============================================================
+# 阶段 1：前端生产构建 —— 产出 appearance/ stage/ guide/ changelogs/
+# ============================================================
+FROM ${NODE_IMAGE} AS node-build
+
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+
+# 容器内 pnpm 需拉取 Electron 等预编译产物，指定国内镜像避免直连 GitHub
+ENV ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ \
+    ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ \
+    COREPACK_NPM_REGISTRY=${NPM_REGISTRY}
+
+WORKDIR /app
+# 先只拷贝清单文件，让依赖层可被缓存复用。
+# pnpm-workspace.yaml 必须一并拷贝：其中的 overrides 参与 lockfile 校验，
+# 缺失会报 ERR_PNPM_LOCKFILE_CONFIG_MISMATCH（官方 Dockerfile 用 app/pnpm* 通配覆盖）。
+COPY app/package.json app/pnpm-lock.yaml app/pnpm-workspace.yaml app/.npmrc ./
+RUN corepack enable \
+ && corepack install --global "$(node -e 'console.log(require("./package.json").packageManager)')" \
+ && npm config set registry "${NPM_REGISTRY}" \
+ && pnpm install --frozen-lockfile --registry="${NPM_REGISTRY}"
+
+COPY app/ ./
+RUN pnpm run build \
+ && node scripts/trimChangelogs.js \
+ && mkdir -p /artifacts \
+ && mv appearance stage guide /artifacts/ \
+ && if [ -d changelogs ]; then mv changelogs /artifacts/; fi
+
+# ============================================================
+# 阶段 2：内核二进制 —— fts5 + sqlcipher 依赖 CGO
+# ============================================================
+FROM ${GO_IMAGE} AS go-build
+
+ARG ALPINE_MIRROR=mirrors.aliyun.com/alpine
+ARG GOPROXY=https://goproxy.cn,direct
+
+RUN sed -i "s#dl-cdn.alpinelinux.org/alpine#${ALPINE_MIRROR}#g" /etc/apk/repositories \
+ && apk add --no-cache gcc musl-dev
+
+# GOTOOLCHAIN=local：基础镜像为 go1.26.8，已满足 go.mod 的 go 1.26.5，
+# 禁止 Go 再联网拉取工具链。GOSUMDB 指向国内校验和数据库。
+ENV GO111MODULE=on \
+    CGO_ENABLED=1 \
+    GOPROXY=${GOPROXY} \
+    GOSUMDB=sum.golang.google.cn \
+    GOTOOLCHAIN=local
+
+WORKDIR /kernel
+COPY kernel/go.mod kernel/go.sum ./
+RUN go mod download
+
+COPY kernel/ ./
+RUN go build -tags "fts5 sqlcipher" \
+      -ldflags "-s -w -X github.com/siyuan-note/siyuan/kernel/util.Mode=prod" \
+      -o /SiYuan-Kernel
+
+# ============================================================
+# 阶段 3：pandoc —— 文档导出（官方镜像不含，缺失时导出功能不可用）
+# ============================================================
+FROM ${ALPINE_IMAGE} AS pandoc-build
+
+ARG ALPINE_MIRROR=mirrors.aliyun.com/alpine
+
+RUN sed -i "s#dl-cdn.alpinelinux.org/alpine#${ALPINE_MIRROR}#g" /etc/apk/repositories \
+ && apk add --no-cache unzip
+
+COPY app/pandoc/pandoc-linux-arm64.zip /tmp/pandoc.zip
+RUN mkdir -p /pandoc/bin \
+ && unzip -q -j /tmp/pandoc.zip 'bin/*' -d /pandoc/bin \
+ && chmod +x /pandoc/bin/pandoc
+
+# ============================================================
+# 阶段 4：运行时
+# ============================================================
+FROM ${ALPINE_IMAGE}
+
+ARG ALPINE_MIRROR=mirrors.aliyun.com/alpine
+
+RUN sed -i "s#dl-cdn.alpinelinux.org/alpine#${ALPINE_MIRROR}#g" /etc/apk/repositories \
+ && apk add --no-cache ca-certificates tzdata su-exec \
+ && mkdir -p /home/siyuan /siyuan/workspace
+
+# RUN_IN_CONTAINER 使内核绑定 0.0.0.0 并使用固定端口 6806。
+# 容器内无 locale，内核探测设备语言会失败并回退英文，故显式指定默认语言（运行时可用 -e 覆盖）。
+# 注意：正因绑定 0.0.0.0，容器模式下内核强制要求 SIYUAN_ACCESS_AUTH_CODE，
+# 未设置会直接退出（exit 22）——这是上游防止无密码暴露服务的安全设计，不在镜像内设默认密码。
+ENV TZ=Asia/Shanghai \
+    HOME=/home/siyuan \
+    RUN_IN_CONTAINER=true \
+    SIYUAN_WORKSPACE_PATH=/siyuan/workspace \
+    SIYUAN_LANG=zh-CN
+
+EXPOSE 6806
+WORKDIR /opt/siyuan/
+
+COPY --from=go-build   --chmod=755 /SiYuan-Kernel   ./kernel
+COPY --from=node-build               /artifacts/    ./
+COPY --from=pandoc-build             /pandoc        ./pandoc
+COPY app/pandoc/pandoc-resources/                   ./pandoc/pandoc-resources/
+COPY LICENSE THIRD_PARTY_NOTICES.md                 ./
+COPY --chmod=755 kernel/entrypoint.sh               ./
+
+ENTRYPOINT ["/opt/siyuan/entrypoint.sh"]
+# CMD 只放子命令：entrypoint.sh 末行已硬编码 `/opt/siyuan/kernel`，再把 "$@" 原样追加。
+# 若这里写成 ["/opt/siyuan/kernel", "serve"] 会导致路径重复，报
+# `unknown command "/opt/siyuan/kernel" for "kernel"`。
+CMD ["serve"]
