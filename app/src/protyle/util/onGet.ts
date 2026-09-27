@@ -42,6 +42,7 @@ import {invalidateTrackedRanges, invalidateTrackedRangesInElement} from "./track
 import {areProtylePluginExtensionsEnabled} from "../runtimeCapabilities";
 import {recordRestoredSpellcheckFocus} from "./spellcheckFocus";
 import {applyPublishFoldStates} from "./viewFold";
+import {syncActiveDocumentURL} from "../../layout/util";
 /// #if MOBILE
 import {updateMobileTitleReadonly} from "./setEditMode";
 /// #endif
@@ -112,6 +113,7 @@ export const onGet = (options: {
     options.protyle.block.parentID = options.data.data.parentID;
     options.protyle.block.parent2ID = options.data.data.parent2ID;
     options.protyle.block.rootID = options.data.data.rootID;
+    syncActiveDocumentURL();
     options.protyle.block.showAll = options.action.includes(Constants.CB_GET_ALL);
     options.protyle.block.mode = options.data.data.mode;
     options.protyle.block.blockCount = options.data.data.blockCount;

@@ -22,7 +22,7 @@ import {Constants} from "../constants";
 import {saveScroll} from "../protyle/scroll/saveScroll";
 import {Backlink} from "./dock/Backlink";
 import {openFileById} from "../editor/util";
-import {isWindow} from "../util/functions";
+import {getFrontend, isWindow} from "../util/functions";
 import {showMessage} from "../dialog/message";
 import {isEncryptedBox, parseUriInfo} from "../util/pathName";
 import {Custom} from "./dock/Custom";
@@ -45,6 +45,25 @@ import {applyDockEntryVisibility} from "../config/entryVisibility/runtime";
 import {MIN_HORIZONTAL_PANE_SIZE, MIN_VERTICAL_PANE_SIZE, panePercentages, resizePanePercentages} from "./resizePane";
 import {requestResponsiveDockLayout} from "./dock/responsive";
 import {stickyRow} from "../protyle/render/av/row";
+import {documentURL} from "./documentURL";
+
+let documentURLSyncReady = false;
+
+export const syncActiveDocumentURL = () => {
+    if (!documentURLSyncReady || !getFrontend().startsWith("browser-")) {
+        return;
+    }
+    const activeHeader = document.querySelector(".layout__wnd--active .layout-tab-bar .item--focus");
+    const tab = activeHeader ? getInstanceById(activeHeader.getAttribute("data-id")) as Tab : undefined;
+    const id = tab?.model instanceof Editor ? tab.model.editor.protyle.block.rootID : "";
+    if (tab?.model instanceof Editor && !id) {
+        return;
+    }
+    const nextURL = documentURL(window.location.href, id);
+    if (nextURL !== window.location.href) {
+        window.history.replaceState(window.history.state, "", nextURL);
+    }
+};
 
 const isBuiltInCustomModel = (type: string) => {
     return type === "siyuan-card" || type === "siyuan-database-row";
@@ -87,6 +106,7 @@ export const setPanelFocus = (element: Element, isSaveLayout = true) => {
     if (element.getAttribute("data-type") === "wnd") {
         element.classList.add("layout__wnd--active");
         element.querySelector(".layout-tab-bar .item--focus")?.setAttribute("data-activetime", (new Date()).getTime().toString());
+        syncActiveDocumentURL();
         if (isSaveLayout) {
             saveLayout();
         }
@@ -534,6 +554,7 @@ export const JSONToCenter = (
 };
 
 export const JSONToLayout = (app: App, isStart: boolean) => {
+    documentURLSyncReady = false;
     JSONToCenter(app, window.siyuan.config.uiLayout.layout, undefined);
     JSONToDock(window.siyuan.config.uiLayout, app);
     const applyTabStartupMode = isStart || !sessionStorage.getItem(Constants.LOCAL_SESSION_FIRSTLOAD);
@@ -644,6 +665,10 @@ export const JSONToLayout = (app: App, isStart: boolean) => {
     }
     // 需放在 tab.parent.switchTab 后，否则当前 tab 永远为最后一个
     afterLayoutReady(app);
+    documentURLSyncReady = true;
+    if (!info.id) {
+        syncActiveDocumentURL();
+    }
     saveLayout();
     // https://github.com/siyuan-note/siyuan/issues/17779
     if (window.siyuan.layout.rightDock.layout.children[0].element.classList.contains("fn__none") &&

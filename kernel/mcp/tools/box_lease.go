@@ -113,6 +113,13 @@ func resolveEncryptedBoxLeases(args map[string]any) []string {
 	}
 	addObjectID := func(id string) {
 		id = strings.TrimSpace(id)
+		if strings.Contains(id, "://") {
+			resolvedID, err := resolveDocumentLinkID(id)
+			if err != nil {
+				return
+			}
+			id = resolvedID
+		}
 		if !ast.IsNodeIDPattern(id) {
 			return
 		}
@@ -148,7 +155,7 @@ func resolveEncryptedBoxLeases(args map[string]any) []string {
 	}
 	for _, key := range []string{
 		"id", "ids", "blockID", "blockIDs", "documentID", "documentIDs", "parentID", "parentIDs", "rootID", "rootIDs",
-		"nextID", "previousID",
+		"nextID", "previousID", "url",
 	} {
 		addValue(args[key], addObjectID)
 	}

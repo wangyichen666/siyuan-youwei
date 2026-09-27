@@ -47,7 +47,8 @@ func TestMarkdownToBlockDOMCreatesHorizontalSuperBlock(t *testing.T) {
 
 func TestBlockWriteSuccess(t *testing.T) {
 	const id = "20260818000000-abcdefg"
-	result, err := blockWriteSuccess("append", id)
+	const documentID = "20260818000000-docroot"
+	result, err := blockWriteSuccess("append", id, documentID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,22 +60,33 @@ func TestBlockWriteSuccess(t *testing.T) {
 	if err = json.Unmarshal([]byte(result.Content[0].Text), textOutput); err != nil {
 		t.Fatal(err)
 	}
-	if textOutput.Action != "append" || textOutput.ID != id {
+	if textOutput.Action != "append" || textOutput.ID != id || textOutput.DocumentID != documentID ||
+		!strings.Contains(textOutput.DocumentURL, "?id="+documentID) {
 		t.Fatalf("unexpected text output: %#v", textOutput)
 	}
 
 	structuredOutput, ok := result.StructuredContent.(*blockWriteOutput)
-	if !ok || structuredOutput.Action != "append" || structuredOutput.ID != id {
+	if !ok || structuredOutput.Action != "append" || structuredOutput.ID != id || structuredOutput.DocumentURL != textOutput.DocumentURL {
 		t.Fatalf("unexpected structured output: %#v", result.StructuredContent)
 	}
 }
 
 func TestBlockWriteSuccessRejectsEmptyID(t *testing.T) {
-	result, err := blockWriteSuccess("insert", "")
+	result, err := blockWriteSuccess("insert", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !result.IsError {
 		t.Fatalf("expected empty block ID to fail: %#v", result)
+	}
+}
+
+func TestBlockUpdateResultKeepsStatusAndAddsDocumentURL(t *testing.T) {
+	result, err := blockWriteSuccess("update", "20260818000000-abcdefg", "20260818000000-docroot")
+	if err != nil || result.IsError || len(result.Content) != 1 {
+		t.Fatalf("unexpected block update result: %#v, %v", result, err)
+	}
+	if !strings.HasPrefix(result.Content[0].Text, "block updated\nDocumentURL: http://127.0.0.1:") {
+		t.Fatalf("block update result lacks its document URL: %s", result.Content[0].Text)
 	}
 }

@@ -10,6 +10,7 @@ import {
     pdfIsLoading,
     saveLayout,
     setPanelFocus,
+    syncActiveDocumentURL,
 } from "./util";
 import {createTabHeaderElement, Tab} from "./Tab";
 import {Model} from "./Model";
@@ -714,6 +715,7 @@ export class Wnd {
             if (initData) {
                 currentTab.addModel(newModelByInitData(this.app, currentTab, JSON.parse(initData)));
                 currentTab.headElement.removeAttribute("data-initdata");
+                syncActiveDocumentURL();
                 if (isSaveLayout) {
                     saveLayout();
                 }
@@ -774,6 +776,7 @@ export class Wnd {
         } else {
             clearOBG();
         }
+        syncActiveDocumentURL();
         if (isSaveLayout) {
             saveLayout();
         }
@@ -839,6 +842,9 @@ export class Wnd {
         tab.parent = this;
         if (tab.callback) {
             tab.callback(tab);
+        }
+        if (!keepCursor) {
+            syncActiveDocumentURL();
         }
 
         // 移除 centerLayout 中的 empty
@@ -1005,6 +1011,7 @@ export class Wnd {
                 const editors = getAllModels().editor;
                 if (editors.length === 0) {
                     clearOBG();
+                    syncActiveDocumentURL();
                 } else {
                     editors.forEach(item => {
                         if (!item.element.classList.contains("fn__none")) {

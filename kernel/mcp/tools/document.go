@@ -29,12 +29,13 @@ import (
 
 var DocumentTool = &Tool{
 	Name:        "document",
-	Description: "Document operations. Actions: get(id), create(notebook, path=hPath, title, markdown?), list(notebook, path=hPath default /), delete(id), rename(id, title), move(id, notebook, path=target hPath), duplicate(id), search_docs(keyword), info(id).",
+	Description: "Document operations. Actions: get(id or url, includes complete DocumentMarkdown), create(notebook, path=hPath, title, markdown?), list(notebook, path=hPath default /), delete(id), rename(id, title), move(id, notebook, path=target hPath), duplicate(id), search_docs(keyword), info(id). A SiYuan document URL with ?id= or a siyuan://blocks/ link can be used wherever id is accepted. Create, rename, move and duplicate return the document URL.",
 	InputSchema: ToolSchema{
 		Type: "object",
 		Properties: map[string]Property{
 			"action":   {Type: "string", Description: "Operation", Enum: []string{"get", "create", "list", "delete", "rename", "move", "duplicate", "search_docs", "info"}},
-			"id":       {Type: "string", Description: "Document block ID"},
+			"id":       {Type: "string", Description: "Document block ID or SiYuan document link"},
+			"url":      {Type: "string", Description: "SiYuan document link as an alternative to id"},
 			"title":    {Type: "string", Description: "Document title (for create, rename)"},
 			"path":     {Type: "string", Description: "Document hPath, the human-readable path shown in the document tree (e.g. /folder/doc). Used for create, list, move."},
 			"markdown": {Type: "string", Description: "Initial markdown content (for create)"},
@@ -51,6 +52,9 @@ func init() {
 }
 
 func documentHandler(args map[string]any) (CallToolResult, error) {
+	if err := normalizeDocumentToolURL(args, "id", "id"); err != nil {
+		return CallToolResult{Content: []ContentItem{{Type: "text", Text: err.Error()}}, IsError: true}, nil
+	}
 	action, _ := args["action"].(string)
 	switch action {
 	case "get":
@@ -93,10 +97,11 @@ func documentGet(args map[string]any) (CallToolResult, error) {
 	if b == nil {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "document not found: " + id}}, IsError: true}, nil
 	}
+	documentMarkdown := model.GetBlockKramdownInBox(b.RootID, "md", tree.Box)
 
 	return CallToolResult{Content: []ContentItem{{Type: "text", Text: fmt.Sprintf(
-		"ID: %s\nTitle: %s\nHPath: %s\nBox: %s\nContent: %s\nMarkdown: %s\nType: %s\nCreated: %s\nUpdated: %s",
-		b.ID, b.Name, b.HPath, b.Box, b.Content, b.Markdown, b.Type, b.Created, b.Updated,
+		"ID: %s\nDocumentID: %s\nURL: %s\nTitle: %s\nHPath: %s\nBox: %s\nContent: %s\nMarkdown: %s\nDocumentMarkdown: %s\nType: %s\nCreated: %s\nUpdated: %s",
+		b.ID, b.RootID, documentWebURL(b.RootID), b.Name, b.HPath, b.Box, b.Content, b.Markdown, documentMarkdown, b.Type, b.Created, b.Updated,
 	)}}}, nil
 }
 
@@ -136,7 +141,7 @@ func documentCreate(args map[string]any) (CallToolResult, error) {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("create doc failed: %s", err)}}, IsError: true}, nil
 	}
 
-	return CallToolResult{Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("document created: %s (hPath: %s)", tree.Root.ID, hPath)}}}, nil
+	return CallToolResult{Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("document created: %s (hPath: %s)\nURL: %s", tree.Root.ID, hPath, documentWebURL(tree.Root.ID))}}}, nil
 }
 
 func parentDir(p string) string {
@@ -212,7 +217,7 @@ func documentRename(args map[string]any) (CallToolResult, error) {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("rename doc failed: %s", err)}}, IsError: true}, nil
 	}
 
-	return CallToolResult{Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("document renamed: %s -> %s", id, title)}}}, nil
+	return CallToolResult{Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("document renamed: %s -> %s\nURL: %s", id, title, documentWebURL(id))}}}, nil
 }
 
 func documentMove(args map[string]any) (CallToolResult, error) {
@@ -241,7 +246,7 @@ func documentMove(args map[string]any) (CallToolResult, error) {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("move doc failed: %s", err)}}, IsError: true}, nil
 	}
 
-	return CallToolResult{Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("document moved: %s -> %s (hPath: %s)", id, notebook, hPath)}}}, nil
+	return CallToolResult{Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("document moved: %s -> %s (hPath: %s)\nURL: %s", id, notebook, hPath, documentWebURL(id))}}}, nil
 }
 
 func documentDuplicate(args map[string]any) (CallToolResult, error) {
@@ -257,7 +262,7 @@ func documentDuplicate(args map[string]any) (CallToolResult, error) {
 
 	model.DuplicateDoc(tree)
 	util.PushReloadFiletree()
-	return CallToolResult{Content: []ContentItem{{Type: "text", Text: "document duplicated: " + id}}}, nil
+	return CallToolResult{Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("document duplicated: %s -> %s\nURL: %s", id, tree.ID, documentWebURL(tree.ID))}}}, nil
 }
 
 func documentSearchDocs(args map[string]any) (CallToolResult, error) {
@@ -305,8 +310,8 @@ func documentInfo(args map[string]any) (CallToolResult, error) {
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf(
-		"ID: %s\nRootID: %s\nName: %s\nRefCount: %d\nSubFileCount: %d\nIcon: %s",
-		info.ID, info.RootID, info.Name, info.RefCount, info.SubFileCount, info.Icon,
+		"ID: %s\nURL: %s\nRootID: %s\nName: %s\nRefCount: %d\nSubFileCount: %d\nIcon: %s",
+		info.ID, documentWebURL(info.RootID), info.RootID, info.Name, info.RefCount, info.SubFileCount, info.Icon,
 	))
 	if len(info.RefIDs) > 0 {
 		sb.WriteString(fmt.Sprintf("\nRefIDs: %s", strings.Join(info.RefIDs, ", ")))
